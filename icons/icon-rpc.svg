@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0f3d6e"/>
+  <rect x="56" y="56" width="400" height="400" rx="8" fill="none" stroke="#ffffff" stroke-opacity=".16" stroke-width="8"/>
+  <line x1="256" y1="56" x2="256" y2="456" stroke="#ffffff" stroke-opacity=".16" stroke-width="8"/>
+  <g transform="translate(372 150)">
+    <circle r="52" fill="#d7f34a"/>
+    <path d="M-38 -24c18 8 26 20 26 24s-8 16-26 24M38 -24c-18 8-26 20-26 24s8 16 26 24" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <text x="256" y="350" text-anchor="middle" font-family="Inter Display, Inter, sans-serif" font-weight="800" font-size="168" letter-spacing="-4" fill="#ffffff">RPC</text>
+  <rect x="150" y="384" width="212" height="14" rx="7" fill="#d7f34a"/>
+</svg>

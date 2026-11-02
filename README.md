@@ -1,4 +1,4 @@
-# Padel en famille
+# Rondeaux Padel Club (RPC)
 
 Application web (installable sur le téléphone) pour suivre les matchs de padel
 en famille : scores, pronostics avec points, classements, stats et badges.

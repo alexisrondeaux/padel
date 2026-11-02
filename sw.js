@@ -1,9 +1,9 @@
 // Service worker : permet d'installer l'app et de l'ouvrir sans réseau.
 // Stratégie "réseau d'abord" : on a toujours la dernière version quand il y a du réseau.
-const CACHE = 'padel-v1';
+const CACHE = 'padel-v2';
 const SHELL = [
-  './', './index.html', './styles.css?v=20261102', './app.js?v=20261102',
-  './config.js', './scoring.js', './store.js', './manifest.webmanifest', './icons/icon.svg',
+  './', './index.html', './styles.css?v=20261103', './app.js?v=20261103',
+  './config.js', './scoring.js', './store.js', './manifest.webmanifest', './icons/icon-192.png',
 ];
 
 self.addEventListener('install', (e) => {
