@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Padel en famille</title>
+  <meta name="description" content="Scores, pronostics et stats de nos matchs de padel en famille.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f3d6e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Padel">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css?v=20261102">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="28" height="28">
+      <span>Padel en famille</span>
+    </div>
+    <button class="me-chip" type="button" data-action="who" id="me-chip" aria-label="Changer de joueur"></button>
+  </header>
+
+  <main id="app" class="app" aria-live="polite">
+    <p class="loading">Chargement...</p>
+  </main>
+
+  <nav class="tabbar" aria-label="Navigation">
+    <button type="button" data-tab="match"><span aria-hidden="true">🎾</span>Match</button>
+    <button type="button" data-tab="history"><span aria-hidden="true">📜</span>Historique</button>
+    <button type="button" data-tab="ranking"><span aria-hidden="true">🏆</span>Classement</button>
+    <button type="button" data-tab="stats"><span aria-hidden="true">📈</span>Stats</button>
+  </nav>
+
+  <div id="modal" class="modal" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js?v=20261102"></script>
+</body>
+</html>

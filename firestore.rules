@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Seule la collection des matchs est accessible.
+    match /matches/{matchId} {
+      allow read: if true;
+      // Un match doit avoir des équipes et un statut valide.
+      allow create, update: if request.resource.data.keys().hasAll(['teamA', 'teamB', 'status', 'date'])
+        && request.resource.data.status in ['open', 'locked', 'done']
+        && request.resource.data.teamA.size() == 2
+        && request.resource.data.teamB.size() == 2;
+      allow delete: if true;
+    }
+  }
+}
