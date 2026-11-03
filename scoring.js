@@ -142,6 +142,21 @@ export function matchBadges(match, playerIds) {
   return out;
 }
 
+// Niveau Elo : chacun commence à 1000. Après chaque match, l'équipe gagnante prend
+// des points à l'équipe perdante. Battre une équipe plus forte rapporte plus.
+export const ELO_START = 1000;
+export const ELO_K = 32;
+
+export function expectedScore(ra, rb) {
+  return 1 / (1 + 10 ** ((rb - ra) / 400));
+}
+
+// Probabilité que l'équipe A gagne, d'après le niveau actuel de chacun.
+export function winProbability(teamA, teamB, elo) {
+  const r = (t) => (elo[t[0]] + elo[t[1]]) / 2;
+  return expectedScore(r(teamA), r(teamB));
+}
+
 function pairKey(x, y) {
   return [x, y].sort().join('|');
 }
@@ -155,21 +170,35 @@ export function computeStats(matches, playerIds) {
       played: 0, wins: 0, losses: 0, setsWon: 0, setsLost: 0, gamesWon: 0, gamesLost: 0,
       streak: 0, bestStreak: 0, worstStreak: 0, lossStreak: 0,
       betPoints: 0, bets: 0, exactBets: 0, mvp: 0, badges: {},
+      elo: ELO_START, peakElo: ELO_START, eloDelta: 0, form: [],
     };
   }
   const duos = {};
   const h2h = {};
-  const series = { wins: {}, bets: {} };
+  const series = { wins: {}, bets: {}, elo: {} };
   for (const p of playerIds) {
     series.wins[p] = [0];
     series.bets[p] = [0];
+    series.elo[p] = [ELO_START];
   }
+  let bestBet = null;
   const labels = [''];
   const addBadge = (p, b) => { players[p].badges[b] = (players[p].badges[b] || 0) + 1; };
 
   for (const m of done) {
     const win = matchWinner(m.sets);
     const winners = win === 'a' ? m.teamA : m.teamB;
+    const known = [...m.teamA, ...m.teamB].every((p) => players[p]);
+    if (known) {
+      const elo = Object.fromEntries(playerIds.map((p) => [p, players[p].elo]));
+      const delta = Math.round(ELO_K * ((win === 'a' ? 1 : 0) - winProbability(m.teamA, m.teamB, elo)));
+      for (const p of m.teamA) players[p].eloDelta = delta;
+      for (const p of m.teamB) players[p].eloDelta = -delta;
+      for (const p of [...m.teamA, ...m.teamB]) {
+        players[p].elo += players[p].eloDelta;
+        players[p].peakElo = Math.max(players[p].peakElo, players[p].elo);
+      }
+    }
     for (const p of playerIds) {
       const team = teamOf(m, p);
       const st = players[p];
@@ -182,6 +211,7 @@ export function computeStats(matches, playerIds) {
           st.gamesLost += s[other];
           if (setWinner(s) === team) st.setsWon++; else st.setsLost++;
         }
+        st.form = [...st.form, won ? 'V' : 'D'].slice(-5);
         if (won) {
           st.wins++;
           st.streak++;
@@ -202,9 +232,11 @@ export function computeStats(matches, playerIds) {
         st.bets++;
         st.betPoints += r.total;
         if (r.detail.exact) st.exactBets++;
+        if (!bestBet || r.total > bestBet.points) bestBet = { player: p, points: r.total, match: m };
       }
       series.wins[p].push(st.wins);
       series.bets[p].push(st.betPoints);
+      series.elo[p].push(st.elo);
     }
     labels.push(m.date);
 
@@ -238,5 +270,42 @@ export function computeStats(matches, playerIds) {
     .map((d) => ({ ...d, rate: d.wins / d.played }))
     .sort((x, y) => y.rate - x.rate || y.played - x.played);
 
-  return { done, players, duos: duoList, h2h: Object.values(h2h), series, labels };
+  const records = computeRecords(done, players, playerIds, bestBet);
+  return { done, players, duos: duoList, h2h: Object.values(h2h), series, labels, records };
+}
+
+// Records : on garde le premier match qui a établi le record (en cas d'égalité).
+function computeRecords(done, players, playerIds, bestBet) {
+  const games = (m) => {
+    const w = matchWinner(m.sets);
+    const l = w === 'a' ? 'b' : 'a';
+    const won = m.sets.reduce((t, s) => t + s[w], 0);
+    const lost = m.sets.reduce((t, s) => t + s[l], 0);
+    return { won, lost, total: won + lost, gap: won - lost };
+  };
+  const best = (score) => {
+    let top = null;
+    for (const m of done) {
+      const v = score(m);
+      if (v !== null && (!top || v > top.value)) top = { value: v, match: m };
+    }
+    return top;
+  };
+  const topPlayers = (key) => {
+    const max = Math.max(...playerIds.map((p) => players[p][key]));
+    return { value: max, players: playerIds.filter((p) => players[p][key] === max) };
+  };
+  return {
+    bigWin: best((m) => games(m).gap),
+    longest: best((m) => games(m).total),
+    remontada: best((m) => {
+      const w = matchWinner(m.sets);
+      const s = m.sets[0];
+      if (setWinner(s) === w) return null;
+      return Math.abs(s.a - s.b);
+    }),
+    bestBet,
+    streak: topPlayers('bestStreak'),
+    peakElo: topPlayers('peakElo'),
+  };
 }

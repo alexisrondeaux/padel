@@ -1,6 +1,6 @@
 // Tests des règles : node padel/tests.mjs
 import assert from 'node:assert/strict';
-import { scoreError, betPoints, matchBadges, computeStats, matchWinner } from './scoring.js';
+import { scoreError, betPoints, matchBadges, computeStats, matchWinner, winProbability } from './scoring.js';
 
 const S = (...p) => p.map(([a, b]) => ({ a, b }));
 
@@ -54,5 +54,30 @@ assert.equal(st.players.maman.worstStreak, 3);
 assert.equal(st.series.wins.alexis.join(','), '0,1,2,3,3');
 const duo = st.duos.find((d) => d.players.join() === 'alexis,dimitri');
 assert.deepEqual([duo.played, duo.wins], [3, 2]);
+
+// Niveau Elo : à niveau égal, le gagnant prend 16 points, la somme reste à 4000
+assert.equal(st.series.elo.alexis[1], 1016);
+assert.equal(st.series.elo.papa[1], 984);
+assert.equal(ids.reduce((t, p) => t + st.players[p].elo, 0), 4000);
+assert.equal(winProbability(['a', 'b'], ['c', 'd'], { a: 1000, b: 1000, c: 1000, d: 1000 }), 0.5);
+assert.ok(winProbability(['a', 'b'], ['c', 'd'], { a: 1100, b: 1100, c: 1000, d: 1000 }) > 0.6);
+// Battre plus fort que soi rapporte plus : la 4e victoire (Papa & Maman, plus faibles) vaut plus de 16
+assert.ok(st.players.papa.eloDelta > 16);
+assert.equal(st.players.alexis.peakElo, Math.max(...st.series.elo.alexis));
+
+// Forme : les 5 derniers résultats
+assert.deepEqual(st.players.alexis.form, ['V', 'V', 'V', 'D']);
+assert.deepEqual(st.players.maman.form, ['D', 'D', 'D', 'V']);
+
+// Records
+assert.equal(st.records.bigWin.value, 9);
+assert.equal(st.records.bigWin.match.date, '2026-10-01');
+assert.equal(st.records.longest.value, 15);
+assert.equal(st.records.remontada, null);
+assert.deepEqual(st.records.streak, { value: 3, players: ['alexis'] });
+const st2 = computeStats([m], ids);
+assert.equal(st2.records.remontada.value, 2);
+assert.equal(st2.records.bestBet.player, 'alexis');
+assert.equal(st2.records.bestBet.points, 5 + 2 + 9 + 5);
 
 console.log('Tous les tests passent.');

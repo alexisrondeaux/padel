@@ -3,8 +3,8 @@ import { PLAYERS, DEFAULT_TEAMS } from './config.js';
 import { createStore } from './store.js';
 import {
   scoreError, matchWinner, formatScore, betPoints, computeStats, matchBadges,
-  mvpOf, setWinner, BADGES,
-} from './scoring.js';
+  mvpOf, setWinner, teamOf, winProbability, BADGES, ELO_START,
+} from './scoring.js?v=20261106';
 
 const IDS = PLAYERS.map((p) => p.id);
 const P = Object.fromEntries(PLAYERS.map((p) => [p.id, p]));
@@ -17,8 +17,9 @@ const state = {
   me: safeGet('padel-me'),
   tab: safeGet('padel-tab') || 'match',
   chart: 'wins',
-  modal: null, // { type: 'who' } | { type: 'match', id, editing }
+  modal: null, // { type: 'who' } | { type: 'match', id, editing } | { type: 'player', id }
   drafts: {},
+  statuses: null, // statut de chaque match au dernier chargement (pour fêter un score)
 };
 
 // ---------- Utilitaires ----------
@@ -42,6 +43,33 @@ function fmtDate(iso, long) {
   return new Date(y, m - 1, d).toLocaleDateString('fr-FR', opts);
 }
 const pct = (x) => `${Math.round(x * 100)} %`;
+const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
+const teamDots = (ids) => `<span class="tdots">${ids.map((p) => `<i style="background:${P[p] ? P[p].color : '#888'}"></i>`).join('')}</span>`;
+const playerBtn = (p) => `<button class="link-player" data-action="player" data-player="${p}">${dot(p)}${name(p)}</button>`;
+
+// Forme : les 5 derniers résultats, du plus ancien au plus récent.
+function formPills(form) {
+  if (!form.length) return '<span class="muted tiny">-</span>';
+  const label = form.map((r) => (r === 'V' ? 'victoire' : 'défaite')).join(', ');
+  return `<span class="form" role="img" aria-label="Forme, du plus ancien au plus récent : ${label}">${form.map((r) => `<i class="${r === 'V' ? 'v' : 'd'}">${r}</i>`).join('')}</span>`;
+}
+
+// Différence de niveau après le dernier match joué.
+function eloTrend(d) {
+  if (!d) return '';
+  return `<small class="trend ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'} ${Math.abs(d)}</small>`;
+}
+
+// Barre "chances de victoire" entre deux équipes.
+function probaBar(teamA, teamB, st) {
+  const elo = Object.fromEntries(IDS.map((p) => [p, st.players[p].elo]));
+  const a = Math.round(winProbability(teamA, teamB, elo) * 100);
+  return `<div class="proba">
+    <div class="proba-head"><span>${team(teamA)} <b>${a} %</b></span><span><b>${100 - a} %</b> ${team(teamB)}</span></div>
+    <div class="proba-bar" role="img" aria-label="Chances de victoire : ${team(teamA)} ${a} %, ${team(teamB)} ${100 - a} %"><span style="width:${a}%"></span></div>
+    <p class="tiny muted">Chances de victoire d'après le niveau de chacun.</p>
+  </div>`;
+}
 
 let toastTimer;
 function toast(msg, isError) {
@@ -111,11 +139,19 @@ function scoreEditor(key, sets, teamA, teamB) {
   return html;
 }
 
+// Tableau de score façon télé : une ligne par équipe, une colonne par set.
 function scoreLine(sets, teamA, teamB) {
   const w = matchWinner(sets);
-  return `<div class="scoreline">
-    <div class="sl-team${w === 'a' ? ' win' : ''}"><span>${team(teamA)}</span>${sets.map((s) => `<b class="${s.a > s.b ? 'w' : ''}">${s.a}</b>`).join('')}</div>
-    <div class="sl-team${w === 'b' ? ' win' : ''}"><span>${team(teamB)}</span>${sets.map((s) => `<b class="${s.b > s.a ? 'w' : ''}">${s.b}</b>`).join('')}</div>
+  const row = (side, ids) => `<div class="sb-row${w === side ? ' win' : ''}">
+      <span class="sb-team">${teamDots(ids)}<span class="sb-names">${team(ids)}</span></span>
+      <span class="sb-mark" aria-hidden="true">${w === side ? '●' : ''}</span>
+      ${sets.map((s) => {
+        const other = side === 'a' ? 'b' : 'a';
+        return `<b class="sb-set${s[side] > s[other] ? ' w' : ''}">${s[side]}</b>`;
+      }).join('')}
+    </div>`;
+  return `<div class="scoreboard" role="group" aria-label="Score : ${team(w === 'a' ? teamA : teamB)} gagne ${formatScore(sets)}">
+    ${row('a', teamA)}${row('b', teamB)}
   </div>`;
 }
 
@@ -132,10 +168,40 @@ function currentMatch() {
 }
 
 function viewMatch() {
+  const st = computeStats(state.matches, IDS);
   const cur = currentMatch();
-  if (cur) return viewCurrent(cur);
-  const last = computeStats(state.matches, IDS).done.slice(-1)[0];
-  return (last ? viewLastResult(last) : '') + viewNewMatch();
+  if (cur) return viewCurrent(cur, st);
+  const last = st.done.slice(-1)[0];
+  return viewHero(st, last) + (last ? viewLastResult(last) : '') + viewNewMatch(st, !last);
+}
+
+// Écran d'accueil : le dernier vainqueur et le numéro 1 bien en avant.
+function viewHero(st, last) {
+  if (!last) {
+    return `<section class="hero">
+      <div class="hero-kicker">Bienvenue au club</div>
+      <div class="hero-title">Rondeaux Padel Club</div>
+      <p class="hero-text">Crée votre premier match ci-dessous : chacun parie le score, puis on joue.</p>
+    </section>`;
+  }
+  const pl = st.players;
+  const winners = matchWinner(last.sets) === 'a' ? last.teamA : last.teamB;
+  const top = [...IDS].sort((x, y) => pl[y].elo - pl[x].elo)[0];
+  const hot = [...IDS].sort((x, y) => pl[y].streak - pl[x].streak)[0];
+  const mvp = mvpOf(last);
+  const hotTile = pl[hot].streak >= 2
+    ? `<button class="tile" data-action="player" data-player="${hot}"><span class="tile-label">En feu</span><b>${dot(hot)}${name(hot)}</b><small>🔥 ${plural(pl[hot].streak, 'victoire')} de suite</small></button>`
+    : `<div class="tile"><span class="tile-label">Matchs joués</span><b>${st.done.length}</b><small>depuis le début</small></div>`;
+  return `<section class="hero">
+    <div class="hero-kicker">Dernier match · ${fmtDate(last.date, true)}</div>
+    <div class="hero-title">🏆 ${team(winners)}</div>
+    ${mvp.length ? `<p class="hero-text">⭐ MVP : ${mvp.map(name).join(' et ')}</p>` : ''}
+    ${scoreLine(last.sets, last.teamA, last.teamB)}
+    <div class="hero-tiles">
+      <button class="tile" data-action="player" data-player="${top}"><span class="tile-label">N°1 au niveau</span><b>${dot(top)}${name(top)}</b><small>${pl[top].elo} pts</small></button>
+      ${hotTile}
+    </div>
+  </section>`;
 }
 
 function matchHeader(m, pill) {
@@ -146,9 +212,9 @@ function matchHeader(m, pill) {
   </div>`;
 }
 
-function viewCurrent(m) {
+function viewCurrent(m, st) {
   const bets = m.bets || {};
-  let html = `<section class="card">${matchHeader(m, m.status === 'open' ? 'Paris ouverts' : 'Match en cours')}`;
+  let html = `<section class="card">${matchHeader(m, m.status === 'open' ? 'Paris ouverts' : 'Match en cours')}${probaBar(m.teamA, m.teamB, st)}`;
   if (m.status === 'open') {
     const mine = bets[state.me];
     const d = draft(`bet-${m.id}`, () => ({ sets: setsToDraft(mine && mine.sets), editing: !mine }));
@@ -209,16 +275,16 @@ function badgesOfMatch(m) {
 }
 
 function viewLastResult(m) {
-  return `<section class="card">${matchHeader(m, 'Dernier match')}
-    ${scoreLine(m.sets, m.teamA, m.teamB)}
-    <h3>Pronostics</h3>${betsList(m)}
+  return `<section class="card">
+    <h3 class="first">Pronostics du dernier match</h3>${betsList(m)}
     ${mvpBlock(m)}
     <button class="btn ghost" data-action="open" data-id="${m.id}">Voir le détail</button>
   </section>`;
 }
 
-function viewNewMatch() {
-  const d = draft('new', () => ({ date: today(), a: [...DEFAULT_TEAMS.a], played: false, sets: emptySets() }));
+function viewNewMatch(st, openByDefault) {
+  const d = draft('new', () => ({ date: today(), a: [...DEFAULT_TEAMS.a], played: false, sets: emptySets(), open: openByDefault }));
+  if (!d.open) return '<button class="btn primary big" data-action="new-open">＋ Nouveau match</button>';
   const b = IDS.filter((p) => !d.a.includes(p));
   const rows = IDS.map((p) => {
     const inA = d.a.includes(p);
@@ -229,15 +295,15 @@ function viewNewMatch() {
       </div></div>`;
   }).join('');
   const ok = d.a.length === 2;
-  return `<section class="card">
-    <h2>Nouveau match</h2>
+  return `<section class="card" id="new-match">
+    <div class="match-head"><h2>Nouveau match</h2>${openByDefault ? '' : '<button class="close-inline" data-action="new-close" aria-label="Fermer">✕</button>'}</div>
     <label class="field">Date <input type="date" value="${d.date}" data-field="new-date"></label>
     <h3>Équipes</h3>${rows}
     <div class="row-btns">
       <button class="btn ghost small" data-action="shuffle">🎲 Mélanger</button>
       <button class="btn ghost small" data-action="default-teams">Équipes habituelles</button>
     </div>
-    ${ok ? `<p class="teams-preview">${team(d.a)} <span class="vs">vs</span> ${team(b)}</p>` : '<p class="error-text">Il faut 2 joueurs dans chaque équipe.</p>'}
+    ${ok ? `<p class="teams-preview">${team(d.a)} <span class="vs">vs</span> ${team(b)}</p>${st.done.length ? probaBar(d.a, b, st) : ''}` : '<p class="error-text">Il faut 2 joueurs dans chaque équipe.</p>'}
     <label class="check"><input type="checkbox" data-field="new-played" ${d.played ? 'checked' : ''}> Match déjà joué (saisir le score directement, sans paris)</label>
     ${d.played && ok ? scoreEditor('new', d.sets, d.a, b) : ''}
     <button class="btn primary" data-action="create" ${ok ? '' : 'disabled'}>${d.played ? 'Enregistrer le match' : 'Créer le match et ouvrir les paris'}</button>
@@ -284,22 +350,43 @@ function viewMatchModal(m) {
 function viewRanking() {
   const st = computeStats(state.matches, IDS);
   const pl = st.players;
+  const byElo = [...IDS].sort((x, y) => pl[y].elo - pl[x].elo || pl[y].wins - pl[x].wins);
   const byWins = [...IDS].sort((x, y) => pl[y].wins - pl[x].wins || (pl[y].wins / (pl[y].played || 1)) - (pl[x].wins / (pl[x].played || 1)));
   const byBets = [...IDS].sort((x, y) => pl[y].betPoints - pl[x].betPoints || pl[y].exactBets - pl[x].exactBets);
   const medal = (i) => ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
   const streak = (s) => (s.streak ? `🔥 ${s.streak} V` : s.lossStreak ? `❄️ ${s.lossStreak} D` : '-');
   return `<h2 class="page-title">Classement</h2>
   <section class="card">
-    <h3>Matchs</h3>
+    <h3 class="first">Niveau</h3>
+    <ul class="elo-list">
+    ${byElo.map((p, i) => `<li><button class="elo-row" data-action="player" data-player="${p}">
+      <span class="rank">${medal(i)}</span>
+      <span class="grow"><span class="elo-name">${dot(p)}${name(p)}</span>${formPills(pl[p].form)}</span>
+      <span class="elo-pts"><b>${pl[p].elo}</b>${eloTrend(pl[p].eloDelta)}</span>
+      <span class="chev" aria-hidden="true">›</span>
+    </button></li>`).join('')}
+    </ul>
+    <p class="tiny muted">Touche un joueur pour voir sa fiche. Les pastilles montrent les 5 derniers matchs (le plus récent à droite).</p>
+    <details class="rules"><summary>Comment marche le niveau</summary>
+      <ul>
+        <li>Tout le monde part à <b>${ELO_START}</b>.</li>
+        <li>Après chaque match, les gagnants prennent des points aux perdants.</li>
+        <li>Battre une équipe plus forte rapporte beaucoup (jusqu'à 32), battre une équipe plus faible rapporte peu.</li>
+        <li>Le niveau d'une équipe est la moyenne de ses deux joueurs : changer d'équipe ne fausse donc pas le classement.</li>
+      </ul>
+    </details>
+  </section>
+  <section class="card">
+    <h3 class="first">Matchs</h3>
     <table class="table"><thead><tr><th></th><th>Joueur</th><th>V</th><th>D</th><th>%</th><th>⭐</th><th>Série</th></tr></thead><tbody>
-    ${byWins.map((p, i) => `<tr><td>${medal(i)}</td><td>${dot(p)}${name(p)}</td><td><b>${pl[p].wins}</b></td><td>${pl[p].losses}</td><td>${pl[p].played ? pct(pl[p].wins / pl[p].played) : '-'}</td><td>${pl[p].mvp}</td><td class="nowrap">${streak(pl[p])}</td></tr>`).join('')}
+    ${byWins.map((p, i) => `<tr><td>${medal(i)}</td><td>${playerBtn(p)}</td><td><b>${pl[p].wins}</b></td><td>${pl[p].losses}</td><td>${pl[p].played ? pct(pl[p].wins / pl[p].played) : '-'}</td><td>${pl[p].mvp}</td><td class="nowrap">${streak(pl[p])}</td></tr>`).join('')}
     </tbody></table>
     <p class="tiny muted">V victoires, D défaites, ⭐ titres de MVP.</p>
   </section>
   <section class="card">
-    <h3>Pronostics</h3>
+    <h3 class="first">Pronostics</h3>
     <table class="table"><thead><tr><th></th><th>Joueur</th><th>Pts</th><th>Paris</th><th>Moy.</th><th>🔮</th></tr></thead><tbody>
-    ${byBets.map((p, i) => `<tr><td>${medal(i)}</td><td>${dot(p)}${name(p)}</td><td><b>${pl[p].betPoints}</b></td><td>${pl[p].bets}</td><td>${pl[p].bets ? (pl[p].betPoints / pl[p].bets).toFixed(1) : '-'}</td><td>${pl[p].exactBets}</td></tr>`).join('')}
+    ${byBets.map((p, i) => `<tr><td>${medal(i)}</td><td>${playerBtn(p)}</td><td><b>${pl[p].betPoints}</b></td><td>${pl[p].bets}</td><td>${pl[p].bets ? (pl[p].betPoints / pl[p].bets).toFixed(1) : '-'}</td><td>${pl[p].exactBets}</td></tr>`).join('')}
     </tbody></table>
     <p class="tiny muted">🔮 scores exacts trouvés.</p>
     <details class="rules"><summary>Le barème des paris</summary>
@@ -316,16 +403,22 @@ function viewRanking() {
 
 // ---------- Stats ----------
 function chart(st) {
-  const data = state.chart === 'wins' ? st.series.wins : st.series.bets;
+  const data = st.series[state.chart] || st.series.wins;
   const n = st.labels.length - 1;
   if (n < 1) return '<p class="muted">Le graphique apparaîtra après le premier match.</p>';
-  const W = 340; const H = 190; const L = 30; const R = 10; const T = 10; const B = 26;
-  const max = Math.max(1, ...IDS.map((p) => data[p][n]));
+  const W = 340; const H = 190; const L = 36; const R = 10; const T = 10; const B = 26;
+  const all = IDS.flatMap((p) => data[p]);
+  let min = 0;
+  let max = Math.max(1, ...all);
+  if (state.chart === 'elo') {
+    min = Math.floor(Math.min(...all) / 25) * 25;
+    max = Math.max(min + 50, Math.ceil(Math.max(...all) / 25) * 25);
+  }
   const x = (i) => L + (i / n) * (W - L - R);
-  const y = (v) => T + (1 - v / max) * (H - T - B);
-  const step = Math.max(1, Math.ceil(max / 4));
+  const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+  const step = Math.max(1, Math.ceil((max - min) / 4 / (state.chart === 'elo' ? 25 : 1)) * (state.chart === 'elo' ? 25 : 1));
   let grid = '';
-  for (let v = 0; v <= max; v += step) {
+  for (let v = min; v <= max; v += step) {
     grid += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 6}" y="${y(v) + 4}" class="axis" text-anchor="end">${v}</text>`;
   }
   const first = st.labels[1]; const last = st.labels[n];
@@ -336,7 +429,7 @@ function chart(st) {
       <circle cx="${x(n)}" cy="${y(data[p][n])}" r="4" fill="${P[p].color}"/>`;
   }).join('');
   const legend = [...IDS].sort((a, b) => data[b][n] - data[a][n])
-    .map((p) => `<li>${dot(p)}${name(p)} <b>${data[p][n]}</b></li>`).join('');
+    .map((p) => `<li><button class="link-player" data-action="player" data-player="${p}">${dot(p)}${name(p)} <b>${data[p][n]}</b></button></li>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Évolution depuis le ${first ? fmtDate(first) : 'début'}">${grid}${lines}</svg>
     <ul class="legend">${legend}</ul>`;
 }
@@ -366,10 +459,12 @@ function viewStats() {
   <section class="card">
     <div class="seg wide" role="group" aria-label="Choix du graphique">
       <button class="${state.chart === 'wins' ? 'on' : ''}" data-action="chart" data-chart="wins">Victoires</button>
-      <button class="${state.chart === 'bets' ? 'on' : ''}" data-action="chart" data-chart="bets">Points de paris</button>
+      <button class="${state.chart === 'elo' ? 'on' : ''}" data-action="chart" data-chart="elo">Niveau</button>
+      <button class="${state.chart === 'bets' ? 'on' : ''}" data-action="chart" data-chart="bets">Paris</button>
     </div>
     ${chart(st)}
   </section>
+  ${viewRecords(st)}
   <section class="card"><h3>Meilleur duo</h3><ul class="list">${duos}</ul></section>
   <section class="card"><h3>Face-à-face</h3><p class="tiny muted">Victoires quand ils jouent l'un contre l'autre.</p><ul class="list h2h">${h2h}</ul></section>
   <section class="card"><h3>Séries en cours</h3><ul class="list">${streaks}</ul></section>
@@ -379,6 +474,161 @@ function viewStats() {
       <ul>${BADGES.map((b) => `<li>${b.icon} <b>${b.name}</b> : ${b.desc}</li>`).join('')}</ul>
     </details>
   </section>`;
+}
+
+// ---------- Records ----------
+function viewRecords(st) {
+  const r = st.records;
+  const items = [];
+  const matchItem = (icon, title, rec, value, extra) => {
+    const m = rec.match;
+    const w = matchWinner(m.sets) === 'a' ? m.teamA : m.teamB;
+    items.push(`<li><button class="record" data-action="open" data-id="${m.id}">
+      <span class="rec-icon" aria-hidden="true">${icon}</span>
+      <span class="grow"><b>${title}</b><span class="tiny muted">${extra || team(w)} · ${formatScore(m.sets)} · ${fmtDate(m.date)}</span></span>
+      <span class="rec-val">${value}</span></button></li>`);
+  };
+  const playerItem = (icon, title, rec, value) => {
+    items.push(`<li><div class="record">
+      <span class="rec-icon" aria-hidden="true">${icon}</span>
+      <span class="grow"><b>${title}</b><span class="tiny muted">${rec.players.map(name).join(', ')}</span></span>
+      <span class="rec-val">${value}</span></div></li>`);
+  };
+  if (r.bigWin) matchItem('💥', 'Plus large victoire', r.bigWin, `+${r.bigWin.value} jeu${r.bigWin.value > 1 ? 'x' : ''}`);
+  if (r.longest) matchItem('⏱️', 'Match le plus long', r.longest, `${r.longest.value} jeux`);
+  if (r.remontada) matchItem('🔄', 'Plus belle remontada', r.remontada, `-${r.remontada.value} au 1er set`);
+  if (r.bestBet) matchItem('🔮', 'Meilleur pronostic', r.bestBet, `${r.bestBet.points} pts`, name(r.bestBet.player));
+  if (r.streak.value > 0) playerItem('🔥', 'Plus longue série', r.streak, plural(r.streak.value, 'victoire'));
+  if (r.peakElo.value > ELO_START) playerItem('📈', 'Niveau le plus haut', r.peakElo, `${r.peakElo.value} pts`);
+  return `<section class="card"><h3 class="first">Records</h3><ul class="list records">${items.join('')}</ul></section>`;
+}
+
+// ---------- Fiche joueur ----------
+function viewPlayer(p) {
+  const st = computeStats(state.matches, IDS);
+  const s = st.players[p];
+  const rank = [...IDS].sort((x, y) => st.players[y].elo - st.players[x].elo).indexOf(p) + 1;
+  const partners = st.duos.filter((d) => d.players.includes(p))
+    .map((d) => ({ q: d.players.find((x) => x !== p), wins: d.wins, played: d.played, rate: d.rate }))
+    .sort((x, y) => y.rate - x.rate || y.played - x.played);
+  const opponents = st.h2h.filter((h) => h.players.includes(p)).map((h) => {
+    const q = h.players.find((x) => x !== p);
+    return { q, mine: h.wins[p] || 0, theirs: h.wins[q] || 0 };
+  });
+  const nemesis = opponents.filter((o) => o.theirs > o.mine).sort((x, y) => (y.theirs - y.mine) - (x.theirs - x.mine))[0];
+  const victim = opponents.filter((o) => o.mine > o.theirs).sort((x, y) => (y.mine - y.theirs) - (x.mine - x.theirs))[0];
+  const recent = st.done.filter((m) => m.teamA.includes(p) || m.teamB.includes(p)).slice(-5).reverse();
+  const own = BADGES.filter((b) => s.badges[b.id]);
+  const color = P[p] ? P[p].color : '#888';
+
+  const partnerList = partners.length ? partners.map((d, i) => `<li>
+      <div class="grow"><b>${i === 0 && d.wins ? '💙 ' : ''}${name(d.q)}</b>
+      <div class="bar"><span style="width:${Math.round(d.rate * 100)}%"></span></div></div>
+      <span class="nowrap">${d.wins}/${d.played} · ${pct(d.rate)}</span></li>`).join('') : '<li class="muted">Pas encore de match.</li>';
+  const oppList = opponents.length ? opponents.map((o) => {
+    const tag = nemesis && o.q === nemesis.q ? '<span class="tag bad">😈 Bête noire</span>' : victim && o.q === victim.q ? '<span class="tag good">🎯 Victime préférée</span>' : '';
+    return `<li>${dot(o.q)}<span class="grow">${name(o.q)} ${tag}</span><b class="nowrap">${o.mine} - ${o.theirs}</b></li>`;
+  }).join('') : '<li class="muted">Pas encore de match.</li>';
+  const recentList = recent.length ? recent.map((m) => {
+    const side = teamOf(m, p);
+    const won = matchWinner(m.sets) === side;
+    const mates = (side === 'a' ? m.teamA : m.teamB).filter((x) => x !== p);
+    const opp = side === 'a' ? m.teamB : m.teamA;
+    const score = m.sets.map((x) => (side === 'a' ? `${x.a}-${x.b}` : `${x.b}-${x.a}`)).join(' ');
+    return `<li><button class="recent" data-action="open" data-id="${m.id}">
+      <span class="form"><i class="${won ? 'v' : 'd'}">${won ? 'V' : 'D'}</i></span>
+      <span class="grow"><b>${score}</b><span class="tiny muted">avec ${mates.map(name).join(', ')} contre ${team(opp)}</span></span>
+      <span class="tiny muted nowrap">${fmtDate(m.date)}</span></button></li>`;
+  }).join('') : '<li class="muted">Pas encore de match.</li>';
+
+  return `<div class="sheet" role="dialog" aria-modal="true" aria-label="Fiche de ${name(p)}">
+    <button class="close" data-action="close" aria-label="Fermer">✕</button>
+    <div class="profile-head">
+      <span class="avatar" style="background:${color}" aria-hidden="true">${esc((P[p] ? P[p].name : p).charAt(0))}</span>
+      <div><h2>${name(p)}</h2><div class="muted tiny">N°${rank} au niveau · record ${s.peakElo}</div></div>
+      <div class="profile-elo"><b>${s.elo}</b>${eloTrend(s.eloDelta)}</div>
+    </div>
+    <div class="profile-form"><span class="tiny muted">Forme</span>${formPills(s.form)}</div>
+    <div class="kpis">
+      <div><b>${s.wins}-${s.losses}</b><span>victoires-défaites</span></div>
+      <div><b>${s.played ? pct(s.wins / s.played) : '-'}</b><span>de victoires</span></div>
+      <div><b>${s.mvp}</b><span>⭐ MVP</span></div>
+      <div><b>${s.betPoints}</b><span>pts de paris</span></div>
+    </div>
+    <h3>Partenaires</h3><ul class="list">${partnerList}</ul>
+    <h3>Adversaires</h3><p class="tiny muted">Bilan quand ils jouent l'un contre l'autre.</p><ul class="list">${oppList}</ul>
+    <h3>Derniers matchs</h3><ul class="list">${recentList}</ul>
+    <h3>Badges</h3><div class="badges">${own.length ? own.map((b) => `<span class="badge" title="${esc(b.desc)}">${b.icon} ${b.name}${s.badges[b.id] > 1 ? ` <b>×${s.badges[b.id]}</b>` : ''}</span>`).join('') : '<span class="muted tiny">Pas encore de badge</span>'}</div>
+  </div>`;
+}
+
+// ---------- Célébration quand un score est enregistré ----------
+function celebrate(m) {
+  const winners = matchWinner(m.sets) === 'a' ? m.teamA : m.teamB;
+  const el = document.createElement('div');
+  el.className = 'celebrate';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', 'Victoire');
+  el.innerHTML = `<canvas aria-hidden="true"></canvas>
+    <div class="celebrate-card">
+      <div class="celebrate-cup" aria-hidden="true">🏆</div>
+      <div class="hero-kicker">Victoire</div>
+      <div class="celebrate-title">${team(winners)}</div>
+      ${scoreLine(m.sets, m.teamA, m.teamB)}
+      <p class="hero-text">Votez maintenant pour le MVP du match ⭐</p>
+      <button class="btn primary" data-celebrate-close>Voter pour le MVP</button>
+    </div>`;
+  document.body.appendChild(el);
+  const close = () => {
+    el.remove();
+    state.tab = 'match';
+    state.modal = null;
+    render();
+    window.scrollTo(0, 0);
+  };
+  el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-celebrate-close]')) close(); });
+  el.querySelector('[data-celebrate-close]').focus();
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) confetti(el.querySelector('canvas'), winners);
+}
+
+function confetti(canvas, winners) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const colors = [...winners.map((p) => (P[p] ? P[p].color : '#888')), '#d7f34a', '#ffffff'];
+  const bits = Array.from({ length: 140 }, () => ({
+    x: w / 2 + (Math.random() - 0.5) * 80,
+    y: h * 0.35,
+    vx: (Math.random() - 0.5) * 12,
+    vy: -Math.random() * 13 - 4,
+    size: 5 + Math.random() * 6,
+    rot: Math.random() * Math.PI,
+    spin: (Math.random() - 0.5) * 0.3,
+    color: colors[Math.floor(Math.random() * colors.length)],
+  }));
+  const start = performance.now();
+  (function frame(now) {
+    if (!canvas.isConnected || now - start > 4500) return;
+    ctx.clearRect(0, 0, w, h);
+    for (const b of bits) {
+      b.vy += 0.32;
+      b.vx *= 0.99;
+      b.x += b.vx;
+      b.y += b.vy;
+      b.rot += b.spin;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rot);
+      ctx.fillStyle = b.color;
+      ctx.fillRect(-b.size / 2, -b.size / 4, b.size, b.size / 2);
+      ctx.restore();
+    }
+    requestAnimationFrame(frame);
+  }(start));
 }
 
 // ---------- Choix du joueur ----------
@@ -417,6 +667,7 @@ function renderModal() {
   const el = document.getElementById('modal');
   let html = '';
   if (!state.me || (state.modal && state.modal.type === 'who')) html = viewWho();
+  else if (state.modal && state.modal.type === 'player' && P[state.modal.id]) html = viewPlayer(state.modal.id);
   else if (state.modal && state.modal.type === 'match') {
     const m = state.matches.find((x) => x.id === state.modal.id);
     if (m && m.status === 'done') html = viewMatchModal(m);
@@ -439,6 +690,14 @@ const actions = {
   },
   chart(el) { state.chart = el.dataset.chart; render(); },
   open(el) { state.modal = { type: 'match', id: el.dataset.id }; render(); },
+  player(el) { state.modal = { type: 'player', id: el.dataset.player }; render(); },
+  'new-open'() {
+    draft('new', () => ({ date: today(), a: [...DEFAULT_TEAMS.a], played: false, sets: emptySets() })).open = true;
+    render();
+    const card = document.getElementById('new-match');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  'new-close'() { delete state.drafts.new; render(); },
   'edit-score'() { state.modal.editing = true; delete state.drafts[`edit-${state.modal.id}`]; render(); },
   'cancel-edit'() { state.modal.editing = false; render(); },
   async 'save-edit'(el) {
@@ -564,7 +823,10 @@ document.addEventListener('change', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && state.modal && state.me) actions.close();
+  if (e.key !== 'Escape') return;
+  const party = document.querySelector('.celebrate');
+  if (party) party.querySelector('[data-celebrate-close]').click();
+  else if (state.modal && state.me) actions.close();
 });
 
 // ---------- Démarrage ----------
@@ -572,9 +834,14 @@ document.addEventListener('keydown', (e) => {
   render();
   state.store = await createStore();
   state.store.subscribe((list) => {
+    // Un match qui vient de passer à "terminé" : on fête ça sur tous les téléphones.
+    const prev = state.statuses;
+    const justDone = prev && list.find((m) => m.status === 'done' && Array.isArray(m.sets) && prev[m.id] && prev[m.id] !== 'done');
+    state.statuses = Object.fromEntries(list.map((m) => [m.id, m.status]));
     state.matches = list;
     state.loaded = true;
     render();
+    if (justDone && !document.querySelector('.celebrate')) celebrate(justDone);
   }, (err) => {
     console.error(err);
     toast('Impossible de lire les données (connexion ou règles Firebase).', true);
