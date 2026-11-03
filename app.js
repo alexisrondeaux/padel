@@ -4,7 +4,7 @@ import { createStore } from './store.js';
 import {
   scoreError, matchWinner, formatScore, betPoints, computeStats, matchBadges,
   mvpOf, setWinner, teamOf, winProbability, BADGES, ELO_START,
-} from './scoring.js?v=20261106';
+} from './scoring.js?v=20261107';
 
 const IDS = PLAYERS.map((p) => p.id);
 const P = Object.fromEntries(PLAYERS.map((p) => [p.id, p]));
@@ -212,30 +212,130 @@ function matchHeader(m, pill) {
   </div>`;
 }
 
+// ---------- Pari rapide ----------
+// Le pari se choisit en touchant des boutons : vainqueur, 2-0 ou 2-1, set perdu, puis score de chaque set.
+// Les scores de set sont notés du point de vue de l'équipe qui gagne ce set : [6, 3].
+const SET_SCORES = [[6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [7, 5], [7, 6]];
+
+function betDraftFrom(sets) {
+  const d = { winner: null, count: null, lost: null, scores: [null, null, null] };
+  if (!sets) return d;
+  d.winner = matchWinner(sets);
+  d.count = sets.length;
+  sets.forEach((x, i) => {
+    const w = setWinner(x);
+    if (w !== d.winner) d.lost = i;
+    d.scores[i] = [x[w], x[w === 'a' ? 'b' : 'a']];
+  });
+  return d;
+}
+function betSetWinner(d, i) {
+  if (d.count === 3 && i === d.lost) return d.winner === 'a' ? 'b' : 'a';
+  return d.winner;
+}
+function betReady(d) {
+  return d.winner && d.count && (d.count === 2 || d.lost !== null);
+}
+function betSets(d) {
+  if (!betReady(d)) return null;
+  const out = [];
+  for (let i = 0; i < d.count; i++) {
+    if (!d.scores[i]) return null;
+    const [hi, lo] = d.scores[i];
+    out.push(betSetWinner(d, i) === 'a' ? { a: hi, b: lo } : { a: lo, b: hi });
+  }
+  return out;
+}
+
+function betPicker(m, d) {
+  const teams = { a: m.teamA, b: m.teamB };
+  const opt = (field, value, label, on) => `<button class="opt${on ? ' on' : ''}" data-action="bet-pick" data-id="${m.id}" data-field="${field}" data-value="${value}" aria-pressed="${on}">${label}</button>`;
+  let html = `<div class="step"><div class="step-label">1. Qui gagne ?</div><div class="opts two">
+    ${['a', 'b'].map((t) => opt('winner', t, `${teamDots(teams[t])}<span>${team(teams[t])}</span>`, d.winner === t)).join('')}
+  </div></div>`;
+  if (d.winner) {
+    html += `<div class="step"><div class="step-label">2. En combien de sets ?</div><div class="opts two">
+      ${opt('count', 2, '<b>2-0</b><small>sans perdre de set</small>', d.count === 2)}
+      ${opt('count', 3, '<b>2-1</b><small>en 3 sets</small>', d.count === 3)}
+    </div></div>`;
+  }
+  if (d.winner && d.count === 3) {
+    html += `<div class="step"><div class="step-label">3. Quel set perdent ${team(teams[d.winner])} ?</div><div class="opts two">
+      ${opt('lost', 0, '<b>Le 1er set</b>', d.lost === 0)}
+      ${opt('lost', 1, '<b>Le 2e set</b>', d.lost === 1)}
+    </div></div>`;
+  }
+  if (betReady(d)) {
+    const n = d.count === 3 ? 4 : 3;
+    for (let i = 0; i < d.count; i++) {
+      const w = betSetWinner(d, i);
+      const cur = d.scores[i];
+      html += `<div class="step"><div class="step-label">${n + i}. Set ${i + 1} <span class="muted">· gagné par ${team(teams[w])}</span></div>
+        <div class="opts scores">${SET_SCORES.map(([hi, lo]) => `<button class="opt sc${cur && cur[0] === hi && cur[1] === lo ? ' on' : ''}" data-action="bet-score" data-id="${m.id}" data-set="${i}" data-hi="${hi}" data-lo="${lo}">${hi}-${lo}</button>`).join('')}</div></div>`;
+    }
+  }
+  const sets = betSets(d);
+  if (sets) html += `<button class="btn primary" data-action="save-bet" data-id="${m.id}">Valider mon pari</button>`;
+  return html;
+}
+
+function betTicket(m, sets) {
+  const side = matchWinner(sets);
+  const w = side === 'a' ? m.teamA : m.teamB;
+  const other = side === 'a' ? 'b' : 'a';
+  return `<div class="ticket">
+    <div class="ticket-head"><span>🎟️ Ton pari</span><span class="tiny">enregistré</span></div>
+    <div class="ticket-body">
+      <div class="ticket-winner">${teamDots(w)}${team(w)}</div>
+      <div class="ticket-score" aria-label="Score vu du côté de ${team(w)}">${sets.map((x) => `<span class="${x[side] > x[other] ? '' : 'lost'}">${x[side]}-${x[other]}</span>`).join('')}</div>
+    </div>
+    <button class="btn ghost small" data-action="edit-bet" data-id="${m.id}">Modifier</button>
+  </div>`;
+}
+
+// Affiche du match : les deux équipes face à face.
+function matchPoster(m, st) {
+  const bets = m.bets || {};
+  const open = m.status === 'open';
+  const side = (ids) => `<div class="vs-team">
+      <div class="vs-avatars">${ids.map((p) => `<span class="avatar sm" style="background:${P[p] ? P[p].color : '#888'}" aria-hidden="true">${esc((P[p] ? P[p].name : p).charAt(0))}</span>`).join('')}</div>
+      ${ids.map((p) => `<b>${name(p)}</b>`).join('')}
+    </div>`;
+  const elo = Object.fromEntries(IDS.map((p) => [p, st.players[p].elo]));
+  const a = Math.round(winProbability(m.teamA, m.teamB, elo) * 100);
+  const count = IDS.filter((p) => bets[p]).length;
+  const bettors = `<div class="bettors">
+      <div class="bettors-row">${IDS.map((p) => `<span class="avatar xs${bets[p] ? '' : ' off'}" style="${bets[p] ? `background:${P[p].color}` : ''}" title="${name(p)} ${bets[p] ? 'a parié' : "n'a pas encore parié"}">${esc(P[p].name.charAt(0))}</span>`).join('')}</div>
+      <span><b>${count}/${IDS.length}</b> ${count > 1 ? 'ont' : 'a'} parié</span>
+    </div>`;
+  return `<section class="hero poster">
+    <div class="poster-top"><span class="hero-kicker">${fmtDate(m.date, true)}</span><span class="pill">${open ? 'Paris ouverts' : 'Match en cours'}</span></div>
+    <div class="versus" role="group" aria-label="${team(m.teamA)} contre ${team(m.teamB)}">${side(m.teamA)}<div class="vs-mid">VS</div>${side(m.teamB)}</div>
+    <div class="poster-proba" role="img" aria-label="Chances de victoire : ${team(m.teamA)} ${a} %, ${team(m.teamB)} ${100 - a} %">
+      <div class="proba-head"><b>${a} %</b><span>chances de victoire</span><b>${100 - a} %</b></div>
+      <div class="proba-bar"><span style="width:${a}%"></span></div>
+    </div>
+    ${open ? bettors : ''}
+  </section>`;
+}
+
 function viewCurrent(m, st) {
   const bets = m.bets || {};
-  let html = `<section class="card">${matchHeader(m, m.status === 'open' ? 'Paris ouverts' : 'Match en cours')}${probaBar(m.teamA, m.teamB, st)}`;
+  let html = matchPoster(m, st);
   if (m.status === 'open') {
     const mine = bets[state.me];
-    const d = draft(`bet-${m.id}`, () => ({ sets: setsToDraft(mine && mine.sets), editing: !mine }));
-    html += '<h3>Ton pronostic</h3>';
-    if (mine && !d.editing) {
-      html += `<p class="my-bet">${betSummary(m, mine.sets)}</p>
-        <button class="btn ghost" data-action="edit-bet" data-id="${m.id}">Modifier mon pari</button>`;
-    } else {
-      html += `${scoreEditor(`bet-${m.id}`, d.sets, m.teamA, m.teamB)}
-        <button class="btn primary" data-action="save-bet" data-id="${m.id}">Valider mon pari</button>`;
-    }
-    html += `<h3>Qui a parié ?</h3><ul class="who-bet">${IDS.map((p) => `<li>${dot(p)}${name(p)}<span>${bets[p] ? '✅ a parié' : '⏳ pas encore'}</span></li>`).join('')}</ul>
-      <p class="hint">Les paris des autres restent cachés jusqu'au début du match.</p>
-      <button class="btn primary" data-action="lock" data-id="${m.id}">Fermer les paris et lancer le match</button>`;
+    const d = draft(`bet-${m.id}`, () => ({ ...betDraftFrom(mine && mine.sets), editing: !mine }));
+    html += '<section class="card"><h3 class="first">Ton pronostic</h3>';
+    html += mine && !d.editing ? betTicket(m, mine.sets) : betPicker(m, d);
+    html += `<p class="hint">Les paris des autres restent cachés jusqu'au début du match.</p></section>
+      <button class="btn ghost" data-action="lock" data-id="${m.id}">🔒 Fermer les paris et lancer le match</button>`;
   } else {
     const d = draft(`score-${m.id}`, () => ({ sets: emptySets() }));
-    html += `<h3>Les pronostics</h3>${betsList(m)}
+    html += `<section class="card"><h3 class="first">Les pronostics</h3>${betsList(m)}
       <h3>Score final</h3>${scoreEditor(`score-${m.id}`, d.sets, m.teamA, m.teamB)}
-      <button class="btn primary" data-action="save-score" data-id="${m.id}">Enregistrer le score</button>`;
+      <button class="btn primary" data-action="save-score" data-id="${m.id}">Enregistrer le score</button></section>`;
   }
-  html += `<button class="btn link danger" data-action="delete" data-id="${m.id}">Annuler ce match</button></section>`;
+  html += `<button class="btn link danger" data-action="delete" data-id="${m.id}">Annuler ce match</button>`;
   return html;
 }
 
@@ -709,11 +809,29 @@ const actions = {
     }
   },
   'edit-bet'(el) { state.drafts[`bet-${el.dataset.id}`].editing = true; render(); },
+  'bet-pick'(el) {
+    const d = state.drafts[`bet-${el.dataset.id}`];
+    const v = el.dataset.field === 'winner' ? el.dataset.value : Number(el.dataset.value);
+    d[el.dataset.field] = v;
+    if (el.dataset.field === 'count' && v === 2) d.lost = null;
+    render();
+  },
+  'bet-score'(el) {
+    const d = state.drafts[`bet-${el.dataset.id}`];
+    const wasComplete = !!betSets(d);
+    d.scores[Number(el.dataset.set)] = [Number(el.dataset.hi), Number(el.dataset.lo)];
+    // Dès que le pari est complet pour la première fois, il s'enregistre tout seul.
+    if (!wasComplete && betSets(d)) actions['save-bet'](el);
+    else render();
+  },
   async 'save-bet'(el) {
     const id = el.dataset.id;
     const d = state.drafts[`bet-${id}`];
-    const r = draftToSets(d.sets);
-    if (r.error) return toast(r.error, true);
+    const sets = betSets(d);
+    if (!sets) return toast('Termine ton pari : vainqueur, nombre de sets et score de chaque set.', true);
+    const error = scoreError(sets);
+    if (error) return toast(error, true);
+    const r = { sets };
     const m = state.matches.find((x) => x.id === id);
     if (!m || m.status !== 'open') return toast('Les paris sont fermés.', true);
     if (await save(state.store.update(id, { [`bets.${state.me}`]: { sets: r.sets, at: Date.now() } }), 'Pari enregistré ✅')) {

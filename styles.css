@@ -199,6 +199,87 @@ button.tile:active { transform: scale(.98); }
 .btn.big { padding: 16px; font-size: 1.05rem; margin: 0 0 14px; }
 .close-inline { border: 0; background: var(--soft); width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; }
 
+/* ---------- Affiche du match (paris ouverts, match en cours) ---------- */
+.poster-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.versus { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin: 16px 0 14px; text-align: center; }
+.vs-team { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+.vs-team b { font-size: 1.1rem; line-height: 1.25; overflow-wrap: anywhere; }
+.vs-avatars { display: flex; margin-bottom: 8px; }
+.vs-avatars .avatar + .avatar { margin-left: -10px; }
+.vs-mid {
+  width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ball); color: var(--ball-ink); font-weight: 900; font-size: .9rem; letter-spacing: .02em;
+}
+.avatar.sm { width: 42px; height: 42px; font-size: 1.05rem; border: 2px solid #0e3764; }
+.avatar.xs { width: 30px; height: 30px; font-size: .8rem; border: 2px solid #0e3764; }
+.avatar.off { background: transparent; border: 2px dashed rgba(255, 255, 255, .35); color: rgba(255, 255, 255, .5); }
+.poster-proba .proba-head { font-size: .8rem; color: rgba(255, 255, 255, .7); align-items: baseline; }
+.poster-proba .proba-head b { color: #fff; font-size: 1rem; }
+.poster .proba-bar { background: var(--ball); }
+.poster .proba-bar span { background: #fff; border-right-color: #0e3764; }
+.bettors {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); font-size: .9rem; color: rgba(255, 255, 255, .8);
+}
+.bettors b { color: #fff; }
+.bettors-row { display: flex; gap: 6px; }
+.btn.ghost[data-action="lock"] { margin: 0 0 4px; background: transparent; border: 1.5px solid var(--line); }
+
+/* ---------- Pari rapide ---------- */
+.step { margin-bottom: 14px; animation: up .2s ease; }
+.step-label { font-size: .88rem; font-weight: 700; margin-bottom: 8px; }
+.step-label .muted { font-weight: 400; }
+.opts { display: grid; gap: 8px; }
+.opts.two { grid-template-columns: 1fr 1fr; }
+.opts.scores { grid-template-columns: repeat(4, 1fr); }
+.opt {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 48px;
+  padding: 10px 8px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--soft); text-align: center; line-height: 1.2;
+  transition: transform .1s ease;
+}
+.opt:active { transform: scale(.97); }
+.opt small { color: var(--muted); font-size: .75rem; }
+.opt.sc { font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; min-height: 44px; }
+.opt.on { background: var(--court); border-color: var(--court); color: #fff; }
+.opt.on small { color: rgba(255, 255, 255, .75); }
+.opt .tdots i { border-color: var(--soft); }
+.opt.on .tdots i { border-color: var(--court); }
+@media (prefers-color-scheme: dark) {
+  .opt.on { background: var(--ball); border-color: var(--ball); color: var(--ball-ink); }
+  .opt.on small { color: rgba(29, 42, 5, .7); }
+  .opt.on .tdots i { border-color: var(--ball); }
+}
+
+/* ---------- Ticket de pari ---------- */
+.ticket {
+  position: relative; border: 1.5px dashed var(--court-2); border-radius: 14px; padding: 12px 14px 14px;
+  background: var(--soft);
+}
+.ticket::before, .ticket::after {
+  content: ""; position: absolute; top: 38px; width: 16px; height: 16px; border-radius: 50%; background: var(--card);
+}
+.ticket::before { left: -9px; border-right: 1.5px dashed var(--court-2); }
+.ticket::after { right: -9px; border-left: 1.5px dashed var(--court-2); }
+.ticket-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; padding-bottom: 10px; border-bottom: 1.5px dashed var(--line); color: var(--court-2); }
+.ticket-head .tiny { color: var(--win); font-weight: 600; }
+.ticket-head .tiny::before { content: "✓ "; }
+.ticket-body { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; }
+.ticket-winner { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1.1rem; }
+.ticket-winner::before { content: "🏆"; }
+.ticket-score { display: flex; gap: 6px; }
+.ticket-score span {
+  background: var(--court); color: #fff; font-weight: 800; font-size: 1.1rem; font-variant-numeric: tabular-nums;
+  border-radius: 8px; padding: 5px 10px;
+}
+.ticket-score span.lost { background: transparent; color: var(--court); box-shadow: inset 0 0 0 1.5px var(--court); }
+.ticket .btn { margin: 0 auto; display: block; }
+@media (prefers-color-scheme: dark) {
+  .ticket, .ticket-head { border-color: var(--ball); color: var(--ball); }
+  .ticket::before, .ticket::after { border-color: var(--ball); }
+  .ticket-score span { background: var(--ball); color: var(--ball-ink); }
+  .ticket-score span.lost { background: transparent; color: var(--ball); box-shadow: inset 0 0 0 1.5px var(--ball); }
+}
+
 /* ---------- Chances de victoire ---------- */
 .proba { margin: 12px 0 0; }
 .proba-head { display: flex; justify-content: space-between; gap: 10px; font-size: .85rem; }
