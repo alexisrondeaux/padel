@@ -4,7 +4,7 @@ import { createStore } from './store.js';
 import {
   scoreError, matchWinner, formatScore, betPoints, computeStats, matchBadges,
   mvpOf, setWinner, teamOf, winProbability, BADGES, ELO_START,
-} from './scoring.js?v=20261107';
+} from './scoring.js?v=20261108';
 
 const IDS = PLAYERS.map((p) => p.id);
 const P = Object.fromEntries(PLAYERS.map((p) => [p.id, p]));
@@ -336,6 +336,7 @@ function viewCurrent(m, st) {
       <button class="btn primary" data-action="save-score" data-id="${m.id}">Enregistrer le score</button></section>`;
   }
   html += `<button class="btn link danger" data-action="delete" data-id="${m.id}">Annuler ce match</button>`;
+  html += `<div class="past-zone">${viewNewMatch(st, false, true)}</div>`;
   return html;
 }
 
@@ -382,9 +383,15 @@ function viewLastResult(m) {
   </section>`;
 }
 
-function viewNewMatch(st, openByDefault) {
+// pastOnly : seulement un match déjà joué (quand un match est en cours ou depuis l'Historique).
+function viewNewMatch(st, openByDefault, pastOnly) {
   const d = draft('new', () => ({ date: today(), a: [...DEFAULT_TEAMS.a], played: false, sets: emptySets(), open: openByDefault }));
-  if (!d.open) return '<button class="btn primary big" data-action="new-open">＋ Nouveau match</button>';
+  if (!d.open) {
+    return pastOnly
+      ? '<button class="btn ghost" data-action="new-open">＋ Ajouter un match déjà joué</button>'
+      : '<button class="btn primary big" data-action="new-open">＋ Nouveau match</button>';
+  }
+  const played = pastOnly || d.played;
   const b = IDS.filter((p) => !d.a.includes(p));
   const rows = IDS.map((p) => {
     const inA = d.a.includes(p);
@@ -396,25 +403,28 @@ function viewNewMatch(st, openByDefault) {
   }).join('');
   const ok = d.a.length === 2;
   return `<section class="card" id="new-match">
-    <div class="match-head"><h2>Nouveau match</h2>${openByDefault ? '' : '<button class="close-inline" data-action="new-close" aria-label="Fermer">✕</button>'}</div>
+    <div class="match-head"><h2>${pastOnly ? 'Match déjà joué' : 'Nouveau match'}</h2>${openByDefault ? '' : '<button class="close-inline" data-action="new-close" aria-label="Fermer">✕</button>'}</div>
+    ${pastOnly ? '<p class="hint">Pour un match oublié : choisis la date, les équipes et le score.</p>' : ''}
     <label class="field">Date <input type="date" value="${d.date}" data-field="new-date"></label>
     <h3>Équipes</h3>${rows}
     <div class="row-btns">
       <button class="btn ghost small" data-action="shuffle">🎲 Mélanger</button>
       <button class="btn ghost small" data-action="default-teams">Équipes habituelles</button>
     </div>
-    ${ok ? `<p class="teams-preview">${team(d.a)} <span class="vs">vs</span> ${team(b)}</p>${st.done.length ? probaBar(d.a, b, st) : ''}` : '<p class="error-text">Il faut 2 joueurs dans chaque équipe.</p>'}
-    <label class="check"><input type="checkbox" data-field="new-played" ${d.played ? 'checked' : ''}> Match déjà joué (saisir le score directement, sans paris)</label>
-    ${d.played && ok ? scoreEditor('new', d.sets, d.a, b) : ''}
-    <button class="btn primary" data-action="create" ${ok ? '' : 'disabled'}>${d.played ? 'Enregistrer le match' : 'Créer le match et ouvrir les paris'}</button>
+    ${ok ? `<p class="teams-preview">${team(d.a)} <span class="vs">vs</span> ${team(b)}</p>${st.done.length && !played ? probaBar(d.a, b, st) : ''}` : '<p class="error-text">Il faut 2 joueurs dans chaque équipe.</p>'}
+    ${pastOnly ? '' : `<label class="check"><input type="checkbox" data-field="new-played" ${d.played ? 'checked' : ''}> Match déjà joué (saisir le score directement, sans paris)</label>`}
+    ${played && ok ? scoreEditor('new', d.sets, d.a, b) : ''}
+    <button class="btn primary" data-action="create" ${pastOnly ? 'data-past="1"' : ''} ${ok ? '' : 'disabled'}>${played ? 'Enregistrer le match' : 'Créer le match et ouvrir les paris'}</button>
   </section>`;
 }
 
 // ---------- Historique ----------
 function viewHistory() {
-  const done = computeStats(state.matches, IDS).done.slice().reverse();
-  if (!done.length) return '<section class="card empty"><p>Aucun match pour l\'instant.</p></section>';
-  return `<h2 class="page-title">Historique <span class="muted">(${done.length} matchs)</span></h2>${done.map((m) => {
+  const st = computeStats(state.matches, IDS);
+  const done = st.done.slice().reverse();
+  const add = `<div class="past-zone top">${viewNewMatch(st, false, true)}</div>`;
+  if (!done.length) return `${add}<section class="card empty"><p>Aucun match pour l'instant.</p></section>`;
+  return `<h2 class="page-title">Historique <span class="muted">(${done.length} matchs)</span></h2>${add}${done.map((m) => {
     const mvp = mvpOf(m);
     return `<button class="card match-item" data-action="open" data-id="${m.id}">
       <div class="kicker">${fmtDate(m.date)}${mvp.length ? ` · ⭐ ${mvp.map(name).join(', ')}` : ''}</div>
@@ -884,9 +894,12 @@ const actions = {
     render();
   },
   'default-teams'() { state.drafts.new.a = [...DEFAULT_TEAMS.a]; render(); },
-  async create() {
+  async create(el) {
     const d = state.drafts.new;
     if (d.a.length !== 2) return;
+    if (el.dataset.past) d.played = true;
+    // Un seul match ouvert aux paris à la fois.
+    if (!d.played && currentMatch()) return toast('Un match est déjà en cours.', true);
     const teamA = [...d.a];
     const teamB = IDS.filter((p) => !teamA.includes(p));
     const data = { date: d.date || today(), createdAt: Date.now(), teamA, teamB, bets: {}, mvp: {} };

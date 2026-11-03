@@ -197,6 +197,9 @@ button.tile:active { transform: scale(.98); }
 .tile b { display: flex; align-items: center; font-size: 1.05rem; }
 .tile small { color: rgba(255, 255, 255, .75); font-size: .8rem; }
 .btn.big { padding: 16px; font-size: 1.05rem; margin: 0 0 14px; }
+.past-zone { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.past-zone.top { margin: 0 0 14px; padding: 0; border: 0; }
+.past-zone > .btn { margin-top: 0; }
 .close-inline { border: 0; background: var(--soft); width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; }
 
 /* ---------- Affiche du match (paris ouverts, match en cours) ---------- */
