@@ -101,6 +101,13 @@ function draft(key, init) {
   if (!state.drafts[key]) state.drafts[key] = init();
   return state.drafts[key];
 }
+// Scores possibles en face d'un nombre de jeux : 0 à 4 -> 6, 5 -> 7, 6 -> 0 à 4 ou 7, 7 -> 5 ou 6.
+function partnerGames(v) {
+  if (v <= 4) return [6];
+  if (v === 5) return [7];
+  if (v === 6) return [0, 1, 2, 3, 4, 7];
+  return [5, 6];
+}
 function needsThird(sets) {
   const [s0, s1] = sets;
   if ([s0.a, s0.b, s1.a, s1.b].some((v) => v === null) || s0.a === s0.b || s1.a === s1.b) return false;
@@ -123,10 +130,9 @@ function setsToDraft(sets) {
 function scoreEditor(key, sets, teamA, teamB) {
   const rows = needsThird(sets) ? 3 : 2;
   const select = (i, side) => {
-    const max = i === 2 ? 12 : 7;
     const v = sets[i][side];
     let opts = `<option value=""${v === null ? ' selected' : ''}>-</option>`;
-    for (let n = 0; n <= max; n++) opts += `<option value="${n}"${v === n ? ' selected' : ''}>${n}</option>`;
+    for (let n = 0; n <= 7; n++) opts += `<option value="${n}"${v === n ? ' selected' : ''}>${n}</option>`;
     return `<select class="games" data-draft="${key}" data-set="${i}" data-side="${side}" aria-label="Set ${i + 1}, jeux ${side === 'a' ? team(teamA) : team(teamB)}">${opts}</select>`;
   };
   let html = `<div class="score-editor">
@@ -135,7 +141,14 @@ function scoreEditor(key, sets, teamA, teamB) {
     html += `<div class="se-row"><span class="se-label">Set ${i + 1}</span>${select(i, 'a')}${select(i, 'b')}</div>`;
   }
   html += '</div>';
-  if (rows === 2) html += '<p class="hint">Le 3e set apparaît si les équipes gagnent un set chacune. Tie-break à 6-6 = 7-6.</p>';
+  const done = draftToSets(sets);
+  if (done.sets) {
+    const w = matchWinner(done.sets);
+    const sw = done.sets.filter((x) => setWinner(x) === w).length;
+    html += `<p class="se-result">🏆 Victoire de <b>${team(w === 'a' ? teamA : teamB)}</b> ${sw}-${done.sets.length - sw}</p>`;
+  } else if (rows === 2) {
+    html += '<p class="hint">Un 3e set s\'ajoute si chaque équipe gagne un set. Tie-break à 6-6 = 7-6.</p>';
+  }
   return html;
 }
 
@@ -212,73 +225,6 @@ function matchHeader(m, pill) {
   </div>`;
 }
 
-// ---------- Pari rapide ----------
-// Le pari se choisit en touchant des boutons : vainqueur, 2-0 ou 2-1, set perdu, puis score de chaque set.
-// Les scores de set sont notés du point de vue de l'équipe qui gagne ce set : [6, 3].
-const SET_SCORES = [[6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [7, 5], [7, 6]];
-
-function betDraftFrom(sets) {
-  const d = { winner: null, count: null, lost: null, scores: [null, null, null] };
-  if (!sets) return d;
-  d.winner = matchWinner(sets);
-  d.count = sets.length;
-  sets.forEach((x, i) => {
-    const w = setWinner(x);
-    if (w !== d.winner) d.lost = i;
-    d.scores[i] = [x[w], x[w === 'a' ? 'b' : 'a']];
-  });
-  return d;
-}
-function betSetWinner(d, i) {
-  if (d.count === 3 && i === d.lost) return d.winner === 'a' ? 'b' : 'a';
-  return d.winner;
-}
-function betReady(d) {
-  return d.winner && d.count && (d.count === 2 || d.lost !== null);
-}
-function betSets(d) {
-  if (!betReady(d)) return null;
-  const out = [];
-  for (let i = 0; i < d.count; i++) {
-    if (!d.scores[i]) return null;
-    const [hi, lo] = d.scores[i];
-    out.push(betSetWinner(d, i) === 'a' ? { a: hi, b: lo } : { a: lo, b: hi });
-  }
-  return out;
-}
-
-function betPicker(m, d) {
-  const teams = { a: m.teamA, b: m.teamB };
-  const opt = (field, value, label, on) => `<button class="opt${on ? ' on' : ''}" data-action="bet-pick" data-id="${m.id}" data-field="${field}" data-value="${value}" aria-pressed="${on}">${label}</button>`;
-  let html = `<div class="step"><div class="step-label">1. Qui gagne ?</div><div class="opts two">
-    ${['a', 'b'].map((t) => opt('winner', t, `${teamDots(teams[t])}<span>${team(teams[t])}</span>`, d.winner === t)).join('')}
-  </div></div>`;
-  if (d.winner) {
-    html += `<div class="step"><div class="step-label">2. En combien de sets ?</div><div class="opts two">
-      ${opt('count', 2, '<b>2-0</b><small>sans perdre de set</small>', d.count === 2)}
-      ${opt('count', 3, '<b>2-1</b><small>en 3 sets</small>', d.count === 3)}
-    </div></div>`;
-  }
-  if (d.winner && d.count === 3) {
-    html += `<div class="step"><div class="step-label">3. Quel set perdent ${team(teams[d.winner])} ?</div><div class="opts two">
-      ${opt('lost', 0, '<b>Le 1er set</b>', d.lost === 0)}
-      ${opt('lost', 1, '<b>Le 2e set</b>', d.lost === 1)}
-    </div></div>`;
-  }
-  if (betReady(d)) {
-    const n = d.count === 3 ? 4 : 3;
-    for (let i = 0; i < d.count; i++) {
-      const w = betSetWinner(d, i);
-      const cur = d.scores[i];
-      html += `<div class="step"><div class="step-label">${n + i}. Set ${i + 1} <span class="muted">· gagné par ${team(teams[w])}</span></div>
-        <div class="opts scores">${SET_SCORES.map(([hi, lo]) => `<button class="opt sc${cur && cur[0] === hi && cur[1] === lo ? ' on' : ''}" data-action="bet-score" data-id="${m.id}" data-set="${i}" data-hi="${hi}" data-lo="${lo}">${hi}-${lo}</button>`).join('')}</div></div>`;
-    }
-  }
-  const sets = betSets(d);
-  if (sets) html += `<button class="btn primary" data-action="save-bet" data-id="${m.id}">Valider mon pari</button>`;
-  return html;
-}
-
 function betTicket(m, sets) {
   const side = matchWinner(sets);
   const w = side === 'a' ? m.teamA : m.teamB;
@@ -324,9 +270,12 @@ function viewCurrent(m, st) {
   let html = matchPoster(m, st);
   if (m.status === 'open') {
     const mine = bets[state.me];
-    const d = draft(`bet-${m.id}`, () => ({ ...betDraftFrom(mine && mine.sets), editing: !mine }));
+    const d = draft(`bet-${m.id}`, () => ({ sets: setsToDraft(mine && mine.sets), editing: !mine }));
     html += '<section class="card"><h3 class="first">Ton pronostic</h3>';
-    html += mine && !d.editing ? betTicket(m, mine.sets) : betPicker(m, d);
+    html += mine && !d.editing ? betTicket(m, mine.sets)
+      : `<p class="se-intro">Choisis le score que tu prévois pour chaque set.</p>
+        ${scoreEditor(`bet-${m.id}`, d.sets, m.teamA, m.teamB)}
+        <button class="btn primary" data-action="save-bet" data-id="${m.id}">Valider mon pari</button>`;
     html += `<p class="hint">Les paris des autres restent cachés jusqu'au début du match.</p></section>
       <button class="btn ghost" data-action="lock" data-id="${m.id}">🔒 Fermer les paris et lancer le match</button>`;
   } else {
@@ -819,29 +768,11 @@ const actions = {
     }
   },
   'edit-bet'(el) { state.drafts[`bet-${el.dataset.id}`].editing = true; render(); },
-  'bet-pick'(el) {
-    const d = state.drafts[`bet-${el.dataset.id}`];
-    const v = el.dataset.field === 'winner' ? el.dataset.value : Number(el.dataset.value);
-    d[el.dataset.field] = v;
-    if (el.dataset.field === 'count' && v === 2) d.lost = null;
-    render();
-  },
-  'bet-score'(el) {
-    const d = state.drafts[`bet-${el.dataset.id}`];
-    const wasComplete = !!betSets(d);
-    d.scores[Number(el.dataset.set)] = [Number(el.dataset.hi), Number(el.dataset.lo)];
-    // Dès que le pari est complet pour la première fois, il s'enregistre tout seul.
-    if (!wasComplete && betSets(d)) actions['save-bet'](el);
-    else render();
-  },
   async 'save-bet'(el) {
     const id = el.dataset.id;
     const d = state.drafts[`bet-${id}`];
-    const sets = betSets(d);
-    if (!sets) return toast('Termine ton pari : vainqueur, nombre de sets et score de chaque set.', true);
-    const error = scoreError(sets);
-    if (error) return toast(error, true);
-    const r = { sets };
+    const r = draftToSets(d.sets);
+    if (r.error) return toast(r.error, true);
     const m = state.matches.find((x) => x.id === id);
     if (!m || m.status !== 'open') return toast('Les paris sont fermés.', true);
     if (await save(state.store.update(id, { [`bets.${state.me}`]: { sets: r.sets, at: Date.now() } }), 'Pari enregistré ✅')) {
@@ -943,7 +874,17 @@ document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.matches('select.games')) {
     const d = state.drafts[el.dataset.draft];
-    d.sets[Number(el.dataset.set)][el.dataset.side] = el.value === '' ? null : Number(el.value);
+    const set = d.sets[Number(el.dataset.set)];
+    const side = el.dataset.side;
+    const other = side === 'a' ? 'b' : 'a';
+    const v = el.value === '' ? null : Number(el.value);
+    set[side] = v;
+    // Jamais de score de set impossible (5-3, 6-5...) : on complète ou on vide l'autre case.
+    if (v !== null) {
+      const ok = partnerGames(v);
+      if (ok.length === 1) set[other] = ok[0];
+      else if (set[other] !== null && !ok.includes(set[other])) set[other] = null;
+    }
     render();
   } else if (el.dataset.field === 'new-date') {
     state.drafts.new.date = el.value;

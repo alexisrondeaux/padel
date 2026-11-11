@@ -228,29 +228,11 @@ button.tile:active { transform: scale(.98); }
 .bettors-row { display: flex; gap: 6px; }
 .btn.ghost[data-action="lock"] { margin: 0 0 4px; background: transparent; border: 1.5px solid var(--line); }
 
-/* ---------- Pari rapide ---------- */
-.step { margin-bottom: 14px; animation: up .2s ease; }
-.step-label { font-size: .88rem; font-weight: 700; margin-bottom: 8px; }
-.step-label .muted { font-weight: 400; }
-.opts { display: grid; gap: 8px; }
-.opts.two { grid-template-columns: 1fr 1fr; }
-.opts.scores { grid-template-columns: repeat(4, 1fr); }
-.opt {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 48px;
-  padding: 10px 8px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--soft); text-align: center; line-height: 1.2;
-  transition: transform .1s ease;
-}
-.opt:active { transform: scale(.97); }
-.opt small { color: var(--muted); font-size: .75rem; }
-.opt.sc { font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; min-height: 44px; }
-.opt.on { background: var(--court); border-color: var(--court); color: #fff; }
-.opt.on small { color: rgba(255, 255, 255, .75); }
-.opt .tdots i { border-color: var(--soft); }
-.opt.on .tdots i { border-color: var(--court); }
-@media (prefers-color-scheme: dark) {
-  .opt.on { background: var(--ball); border-color: var(--ball); color: var(--ball-ink); }
-  .opt.on small { color: rgba(29, 42, 5, .7); }
-  .opt.on .tdots i { border-color: var(--ball); }
+/* ---------- Pari : grille de score ---------- */
+.se-intro { margin: 0 0 10px; font-size: .95rem; }
+.se-result {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; text-align: center;
+  background: var(--soft); border: 1.5px solid var(--ball); font-size: .95rem;
 }
 
 /* ---------- Ticket de pari ---------- */
